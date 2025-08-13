@@ -1,58 +1,63 @@
-LawnConnect Backend API
- Project Overview
-This is the backend for LawnConnect, a two-sided marketplace designed to connect homeowners with lawn care service providers. The API facilitates user management, booking services, and role-based access control, laying the foundation for a platform similar to on-demand services like Uber, but for lawn maintenance.
+# LawnConnect Backend API
 
-The platform's core objective is to handle the business logic that allows:
+## Overview
 
-Customers to schedule and manage lawn care appointments.
+LawnConnect is a two-sided marketplace that connects homeowners with lawn care service providers. This backend API powers the core business logic—managing users, handling bookings, and enforcing role-based access—similar in concept to on-demand platforms like Uber, but tailored for lawn maintenance.
 
-Service Providers (Mowers) to accept job requests, set pricing, and manage their schedules.
+### Core Objectives
 
- Key Features
-User Authentication & Authorization: Secure user registration, login, and token-based authentication (JWT).
+* **For Customers:** Schedule, track, and manage lawn care appointments.
+* **For Service Providers (Mowers):** Accept job requests, set pricing, and manage schedules efficiently.
 
-Role-Based Access Control: Distinguishes between customer and mower roles to restrict access to specific endpoints.
+---
 
-Booking Management: Customers can create, view, and cancel bookings. Mowers can accept, view, and complete bookings.
+## Key Features
 
-Dynamic Booking Status: Bookings have statuses such as pending, accepted, completed, and cancelled.
+* **User Authentication & Authorization** – Secure registration, login, and JWT-based authentication.
+* **Role-Based Access Control** – Separate permissions for customers and mowers to protect endpoints.
+* **Booking Management** –
 
-Simulated Payment: Mowers can set a price upon completing a job, and the API simulates a payment process.
+  * Customers: Create, view, and cancel bookings.
+  * Mowers: Accept, view, and complete bookings.
+* **Dynamic Booking Status** – Supports `pending`, `accepted`, `completed`, and `cancelled`.
+* **Simulated Payments** – Mowers set the price after completing a job; payment is simulated for demo purposes.
+* **Modular Architecture** – Clear separation of concerns using handlers, services, and repositories.
 
-Modular Architecture: Clean separation of concerns using a layered architecture (handlers, services, repositories).
+---
 
- Technologies Used
-Go: The core programming language for the backend.
+## Tech Stack
 
-Chi: A lightweight, idiomatic router for building REST APIs in Go.
+* **Go** – Primary backend language.
+* **Chi** – Lightweight, idiomatic router for Go REST APIs.
+* **MongoDB** – NoSQL database for user, booking, and application data.
+* **Cloudinary** – Media storage for file uploads (e.g., profile images).
+* **SMTP** – Transactional emails (e.g., password resets).
+* **Godotenv** – Environment variable management.
 
-MongoDB: A NoSQL database for storing user, booking, and other application data.
+---
 
-Cloudinary: Used for handling file uploads (e.g., user profile pictures).
+## Getting Started
 
-SMTP: Used for sending transactional emails (e.g., password reset).
+### Prerequisites
 
-Godotenv: Manages environment variables for configuration.
+* Go **v1.18+**
+* MongoDB (local or cloud)
+* Cloudinary account
+* SMTP server credentials
 
-Getting Started
-Prerequisites
-Go (version 1.18 or higher)
+### Installation
 
-A running MongoDB instance (either local or cloud-based).
+1. **Clone the repository**
 
-A Cloudinary account.
-
-An SMTP server for sending emails.
-
-Installation and Setup
-Clone the repository:
-
-git clone [\[your-repo-url\]](https://github.com/OsGift/lawnconnect-api)
+```bash
+git clone https://github.com/OsGift/lawnconnect-api
 cd lawnconnect-api
+```
 
-Set up environment variables:
-Create a .env file in the root directory and populate it with your configuration details. A sample.env is provided to guide you.
+2. **Set environment variables**
+   Create a `.env` file in the root directory. Use `sample.env` as a guide:
 
+```env
 MONGO_URI="mongodb://localhost:27017"
 MONGO_DB_NAME="lawnconnect_db"
 JWT_SECRET="your_secret_key"
@@ -64,87 +69,35 @@ SMTP_PASS="password"
 FROM_EMAIL="noreply@lawnconnect.com"
 TEMPLATES_PATH="./templates"
 LOGIN_URL="http://localhost:8080/login"
+```
 
-Run the application:
+3. **Run the application**
 
+```bash
 go run main.go
+```
 
-The server will start on http://localhost:8080.
+The server will be available at `http://localhost:8080`.
 
-API Endpoints
-All endpoints are prefixed with /api/v1.
+---
 
-Method
+## API Endpoints
 
-Endpoint
+All routes are prefixed with `/api/v1`.
 
-Description
+| Method | Endpoint                         | Description                       | Role     |
+| ------ | -------------------------------- | --------------------------------- | -------- |
+| POST   | `/auth/register`                 | Register a new account            | Public   |
+| POST   | `/auth/login`                    | Login and receive a JWT           | Public   |
+| POST   | `/bookings`                      | Create a booking                  | Customer |
+| GET    | `/bookings`                      | Get all bookings for current user | Both     |
+| GET    | `/bookings/{bookingID}`          | Get booking by ID                 | Both     |
+| PUT    | `/bookings/{bookingID}/cancel`   | Cancel a booking                  | Customer |
+| PUT    | `/bookings/{bookingID}/accept`   | Accept a booking                  | Mower    |
+| PUT    | `/bookings/{bookingID}/complete` | Complete a booking and set price  | Mower    |
 
-Access Role
+---
 
-POST
+## Contributing
 
-/auth/register
-
-Creates a new user account.
-
-Public
-
-POST
-
-/auth/login
-
-Authenticates a user and returns a JWT.
-
-Public
-
-POST
-
-/bookings
-
-Creates a new booking.
-
-Customer
-
-GET
-
-/bookings
-
-Retrieves all bookings for the authenticated user.
-
-Both
-
-GET
-
-/bookings/{bookingID}
-
-Retrieves a single booking by ID.
-
-Both
-
-PUT
-
-/bookings/{bookingID}/cancel
-
-Cancels an existing booking.
-
-Customer
-
-PUT
-
-/bookings/{bookingID}/accept
-
-Accepts a booking request.
-
-Mower
-
-PUT
-
-/bookings/{bookingID}/complete
-
-Completes a booking and sets the final price.
-
-Mower
-
- Contributing
-Feel free to submit issues or pull requests to improve the API's functionality, security, or performance.
+Contributions are welcome! Please open issues or submit pull requests for improvements, bug fixes, or feature suggestions.
