@@ -4,7 +4,6 @@ import "fmt"
 
 type (
 	// UserError is a general error type for the user-facing issues.
-	// You can still use this as a container for more specific errors.
 	UserError struct {
 		ErrorGetting
 		ErrorUpdating

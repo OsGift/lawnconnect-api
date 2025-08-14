@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2"
@@ -49,19 +50,23 @@ func main() {
 	_ = uploadService
 
 	smtpHost := os.Getenv("SMTP_HOST")
-	smtpPort := 587
+	smtpPortStr := os.Getenv("SMTP_PORT")
 	smtpUser := os.Getenv("SMTP_USER")
 	smtpPass := os.Getenv("SMTP_PASS")
 	fromEmail := os.Getenv("FROM_EMAIL")
 	templatesPath := os.Getenv("TEMPLATES_PATH")
 	loginURL := os.Getenv("LOGIN_URL")
+	smtpPort, err := strconv.Atoi(smtpPortStr)
+	if err != nil {
+		log.Fatalf("Invalid SMTP_PORT: %v", err)
+	}
 	emailService := infrastructureServices.NewEmailService(smtpHost, smtpPort, smtpUser, smtpPass, fromEmail, templatesPath, loginURL)
 	_ = emailService
 
 	userRepo := repositories.NewUserRepository(db)
 	bookingRepo := repositories.NewBookingRepository(db)
 
-	authService := coreServices.NewAuthService(userRepo)
+	authService := coreServices.NewAuthService(userRepo, emailService)
 	bookingService := coreServices.NewBookingService(bookingRepo)
 
 	authHandler := handlers.NewAuthHandler(authService)
@@ -70,6 +75,7 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
 
 	workDir, _ := os.Getwd()
 	filesDir := http.Dir(filepath.Join(workDir, "web"))
@@ -77,9 +83,12 @@ func main() {
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public routes
+		// Public routes for authentication
 		r.Route("/auth", func(r chi.Router) {
-			r.Mount("/", authHandler.Routes())
+			r.Post("/register", authHandler.Register)
+			r.Post("/login", authHandler.Login)
+			r.Post("/forgot-password", authHandler.ForgotPassword)
+			r.Post("/reset-password", authHandler.ResetPassword)
 		})
 
 		// Protected routes for customers
@@ -88,8 +97,8 @@ func main() {
 			r.Use(handlers.RoleMiddleware("customer"))
 
 			// Customer-specific booking routes
-			r.Get("/bookings", bookingHandler.ListBookings)
 			r.Post("/bookings", bookingHandler.CreateBooking)
+			r.Get("/bookings", bookingHandler.ListBookings)
 			r.Get("/bookings/{bookingID}", bookingHandler.GetBookingByID)
 			r.Put("/bookings/{bookingID}/cancel", bookingHandler.CancelBooking)
 		})
@@ -101,8 +110,11 @@ func main() {
 
 			// Mower-specific booking routes
 			r.Get("/bookings", bookingHandler.ListBookings)
+			r.Get("/bookings/pending", bookingHandler.ListPendingBookings)
+			r.Get("/bookings/{bookingID}", bookingHandler.GetBookingByID)
 			r.Put("/bookings/{bookingID}/accept", bookingHandler.AcceptBooking)
 			r.Put("/bookings/{bookingID}/complete", bookingHandler.CompleteBooking)
+			r.Put("/bookings/{bookingID}/reject", bookingHandler.RejectBooking)
 		})
 	})
 

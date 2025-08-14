@@ -2,18 +2,25 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"log"
+	"os"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 	"lawnconnect-api/internal/core/apperror"
 	"lawnconnect-api/internal/core/domain"
 	"lawnconnect-api/internal/infrastructure/database/repositories"
+	infrastructureServices "lawnconnect-api/internal/infrastructure/services"
+
+	"github.com/golang-jwt/jwt/v5"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtKey = []byte("your_very_secure_secret_key") // Use a secret key from your .env file
+var jwtKey = []byte(os.Getenv("JWT_SECRET"))
 
 // Claims represents the JWT claims.
 type Claims struct {
@@ -26,15 +33,18 @@ type Claims struct {
 type AuthService interface {
 	Register(ctx context.Context, name, email, password, role string) (*domain.User, error)
 	Login(ctx context.Context, email, password string) (*domain.User, string, error)
+	ForgotPassword(ctx context.Context, email string) error
+	ResetPassword(ctx context.Context, token, newPassword string) error
 }
 
 type authService struct {
-	userRepo repositories.UserRepository
+	userRepo     repositories.UserRepository
+	emailService infrastructureServices.EmailService
 }
 
 // NewAuthService creates a new AuthService instance.
-func NewAuthService(userRepo repositories.UserRepository) AuthService {
-	return &authService{userRepo: userRepo}
+func NewAuthService(userRepo repositories.UserRepository, emailService infrastructureServices.EmailService) AuthService {
+	return &authService{userRepo: userRepo, emailService: emailService}
 }
 
 // Register handles user registration logic.
@@ -58,7 +68,6 @@ func (s *authService) Register(ctx context.Context, name, email, password, role 
 		Email:     email,
 		Password:  string(hashedPassword),
 		Role:      role,
-		IsVerified: false,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -73,18 +82,15 @@ func (s *authService) Register(ctx context.Context, name, email, password, role 
 
 // Login handles user login and JWT token generation.
 func (s *authService) Login(ctx context.Context, email, password string) (*domain.User, string, error) {
-	// Find the user by email
 	user, err := s.userRepo.FindUserByEmail(ctx, email)
 	if err != nil {
 		return nil, "", apperror.InvalidLoginCredentials{}
 	}
 
-	// Compare the password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, "", apperror.InvalidLoginCredentials{}
 	}
 
-	// Generate a JWT token
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
 		UserID: user.ID,
@@ -102,4 +108,91 @@ func (s *authService) Login(ctx context.Context, email, password string) (*domai
 	}
 
 	return user, tokenString, nil
+}
+
+// ForgotPassword handles the logic for a user requesting a password reset.
+func (s *authService) ForgotPassword(ctx context.Context, email string) error {
+	user, err := s.userRepo.FindUserByEmail(ctx, email)
+	if err != nil {
+		if _, ok := err.(apperror.NotFound); ok {
+			// Fail silently to prevent email enumeration attacks.
+			log.Printf("Password reset request for non-existent email: %s", email)
+			return nil
+		}
+		return fmt.Errorf("error finding user: %w", err)
+	}
+
+	resetToken, err := generateRandomToken(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate reset token: %w", err)
+	}
+
+	resetTokenExpiresAt := time.Now().Add(1 * time.Hour)
+	update := bson.M{
+		"$set": bson.M{
+			"resetToken":          resetToken,
+			"resetTokenExpiresAt": resetTokenExpiresAt,
+			"updatedAt":           time.Now(),
+		},
+	}
+	err = s.userRepo.UpdateUser(ctx, user.ID, update)
+	if err != nil {
+		return fmt.Errorf("failed to save reset token: %w", err)
+	}
+
+	resetURL := fmt.Sprintf("%s?token=%s", os.Getenv("LOGIN_URL"), resetToken)
+	templateData := map[string]interface{}{
+		"Name":     user.Name,
+		"ResetURL": resetURL,
+	}
+
+	log.Printf("Password reset email sent to %s with reset link: %s", user.Email, resetURL)
+	err = s.emailService.SendEmail(ctx, user.Email, "Password Reset Request", "password-reset.html", templateData)
+	if err != nil {
+		log.Printf("Failed to send password reset email to %s: %v", user.Email, err)
+	}
+
+	return nil
+}
+
+// ResetPassword handles the logic for a user resetting their password with a valid token.
+func (s *authService) ResetPassword(ctx context.Context, token, newPassword string) error {
+	user, err := s.userRepo.FindUserByResetToken(ctx, token)
+	if err != nil {
+		return apperror.CustomError{Message: "Invalid or expired token"}
+	}
+
+	if time.Now().After(user.ResetTokenExpiresAt) {
+		return apperror.CustomError{Message: "Invalid or expired token"}
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash new password: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"password":            string(hashedPassword),
+			"resetToken":          "", // Clear the token after use
+			"resetTokenExpiresAt": time.Time{},
+			"updatedAt":           time.Now(),
+		},
+	}
+
+	err = s.userRepo.UpdateUser(ctx, user.ID, update)
+	if err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	return nil
+}
+
+// generateRandomToken creates a cryptographically secure random string.
+func generateRandomToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
 }

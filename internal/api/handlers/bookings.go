@@ -2,13 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	httpresponse "lawnconnect-api/internal/api/http"
+	"lawnconnect-api/internal/core/apperror"
+	"lawnconnect-api/internal/core/services"
 	"log"
 	"net/http"
-	"lawnconnect-api/internal/core/services"
-	httpresponse "lawnconnect-api/internal/api/http"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+
 	"github.com/go-chi/chi/v5"
-	"lawnconnect-api/internal/core/apperror"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // BookingHandler handles HTTP requests related to bookings.
@@ -24,7 +25,6 @@ func NewBookingHandler(bookingSrv services.BookingService) *BookingHandler {
 // CreateBooking handles creating a new booking.
 func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
-		CustomerID  string `json:"customerId"`
 		Date        string `json:"date"`
 		Time        string `json:"time"`
 		Address     string `json:"address"`
@@ -36,11 +36,7 @@ func (h *BookingHandler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerID, err := primitive.ObjectIDFromHex(reqBody.CustomerID)
-	if err != nil {
-		httpresponse.JSONError(w, http.StatusBadRequest, "Invalid customer ID")
-		return
-	}
+	customerID := r.Context().Value(UserContextKey).(primitive.ObjectID)
 
 	booking, err := h.BookingService.CreateBooking(r.Context(), customerID, reqBody.Date, reqBody.Time, reqBody.Address, reqBody.Description)
 	if err != nil {
@@ -63,7 +59,11 @@ func (h *BookingHandler) GetBookingByID(w http.ResponseWriter, r *http.Request) 
 	booking, err := h.BookingService.GetBookingByID(r.Context(), bookingID)
 	if err != nil {
 		log.Printf("Error getting booking: %v", err)
-		httpresponse.JSONError(w, http.StatusNotFound, "Booking not found")
+		if _, ok := err.(apperror.NotFound); ok {
+			httpresponse.JSONError(w, http.StatusNotFound, "Booking not found")
+			return
+		}
+		httpresponse.JSONError(w, http.StatusInternalServerError, "Failed to retrieve booking")
 		return
 	}
 
@@ -142,6 +142,18 @@ func (h *BookingHandler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	httpresponse.JSONSuccess(w, http.StatusOK, "Bookings retrieved successfully", bookings)
 }
 
+// ListPendingBookings handles listing all pending bookings for mowers.
+func (h *BookingHandler) ListPendingBookings(w http.ResponseWriter, r *http.Request) {
+	bookings, err := h.BookingService.ListPendingBookings(r.Context())
+	if err != nil {
+		log.Printf("Error listing pending bookings: %v", err)
+		httpresponse.JSONError(w, http.StatusInternalServerError, "Failed to retrieve pending bookings")
+		return
+	}
+
+	httpresponse.JSONSuccess(w, http.StatusOK, "Pending bookings retrieved successfully", bookings)
+}
+
 // CancelBooking handles a customer cancelling their booking.
 func (h *BookingHandler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	bookingIDStr := chi.URLParam(r, "bookingID")
@@ -166,21 +178,41 @@ func (h *BookingHandler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	httpresponse.JSONSuccess(w, http.StatusOK, "Booking cancelled successfully", nil)
 }
 
-// CustomerRoutes mounts the booking-related routes for customers to a chi router.
-func (h *BookingHandler) CustomerRoutes() chi.Router {
-	r := chi.NewRouter()
-	r.Get("/", h.ListBookings) // GET /api/v1/bookings
-	r.Post("/", h.CreateBooking) // POST /api/v1/bookings
-	r.Get("/{bookingID}", h.GetBookingByID) // GET /api/v1/bookings/{bookingID}
-	r.Put("/{bookingID}/cancel", h.CancelBooking) // PUT /api/v1/bookings/{bookingID}/cancel
-	return r
+// RejectBooking handles a mower rejecting a booking.
+func (h *BookingHandler) RejectBooking(w http.ResponseWriter, r *http.Request) {
+	bookingIDStr := chi.URLParam(r, "bookingID")
+	bookingID, err := primitive.ObjectIDFromHex(bookingIDStr)
+	if err != nil {
+		httpresponse.JSONError(w, http.StatusBadRequest, "Invalid booking ID")
+		return
+	}
+
+	mowerID := r.Context().Value(UserContextKey).(primitive.ObjectID)
+
+	err = h.BookingService.RejectBooking(r.Context(), bookingID, mowerID)
+	if err != nil {
+		if _, ok := err.(apperror.CustomError); ok {
+			httpresponse.JSONError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		httpresponse.JSONError(w, http.StatusInternalServerError, "Failed to reject booking")
+		return
+	}
+
+	httpresponse.JSONSuccess(w, http.StatusOK, "Booking rejected successfully", nil)
 }
 
-// MowerRoutes mounts the booking-related routes for mowers to a chi router.
-func (h *BookingHandler) MowerRoutes() chi.Router {
+// Routes mounts the booking-related routes to a chi router.
+func (h *BookingHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.ListBookings) // GET /api/v1/bookings
-	r.Put("/{bookingID}/accept", h.AcceptBooking) // PUT /api/v1/bookings/{bookingID}/accept
+	r.Post("/", h.CreateBooking)                      // POST /api/v1/bookings
+	r.Get("/", h.ListBookings)                        // GET /api/v1/bookings
+	r.Get("/pending", h.ListPendingBookings)          // GET /api/v1/bookings/pending
+	r.Get("/{bookingID}", h.GetBookingByID)           // GET /api/v1/bookings/{bookingID}
+	r.Put("/{bookingID}/accept", h.AcceptBooking)     // PUT /api/v1/bookings/{bookingID}/accept
 	r.Put("/{bookingID}/complete", h.CompleteBooking) // PUT /api/v1/bookings/{bookingID}/complete
+	r.Put("/{bookingID}/cancel", h.CancelBooking)     // PUT /api/v1/bookings/{bookingID}/cancel
+	r.Put("/{bookingID}/reject", h.RejectBooking)     // PUT /api/v1/bookings/{bookingID}/reject
+
 	return r
 }

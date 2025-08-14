@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"lawnconnect-api/internal/core/apperror"
 	"lawnconnect-api/internal/core/domain"
-
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,6 +15,7 @@ type BookingRepository interface {
 	CreateBooking(ctx context.Context, booking *domain.Booking) error
 	FindBookingByID(ctx context.Context, bookingID primitive.ObjectID) (*domain.Booking, error)
 	FindBookingsByUserID(ctx context.Context, userID primitive.ObjectID) ([]*domain.Booking, error)
+	FindPendingBookings(ctx context.Context) ([]*domain.Booking, error)
 	UpdateBooking(ctx context.Context, bookingID primitive.ObjectID, update bson.M) error
 }
 
@@ -72,6 +72,24 @@ func (r *bookingRepository) FindBookingsByUserID(ctx context.Context, userID pri
 	}
 	return bookings, nil
 }
+
+// FindPendingBookings retrieves all bookings with a "pending" status.
+func (r *bookingRepository) FindPendingBookings(ctx context.Context) ([]*domain.Booking, error) {
+	var bookings []*domain.Booking
+	filter := bson.M{"status": "pending"}
+
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find pending bookings: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	if err := cursor.All(ctx, &bookings); err != nil {
+		return nil, fmt.Errorf("failed to decode pending bookings: %w", err)
+	}
+	return bookings, nil
+}
+
 
 // UpdateBooking updates a booking document by its ID.
 func (r *bookingRepository) UpdateBooking(ctx context.Context, bookingID primitive.ObjectID, update bson.M) error {
